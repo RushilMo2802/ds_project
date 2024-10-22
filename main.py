@@ -1,127 +1,158 @@
+import sqlite3
 from kivy.lang import Builder
+from kivy.core.window import Window
 from kivymd.app import MDApp
+from kivymd.uix.dialog import MDDialog
 from kivymd.uix.boxlayout import MDBoxLayout
-from kivymd.uix.list import OneLineIconListItem, MDList
-from kivymd.uix.button import MDFloatingActionButton, MDIconButton
-from kivymd.uix.card import MDCard
-from kivy.uix.image import Image
+from kivymd.uix.pickers import MDDatePicker
+from kivymd.uix.list import TwoLineAvatarIconListItem, ILeftBodyTouch
+from kivymd.uix.selectioncontrol import MDCheckbox
+from datetime import datetime
+from kivy.utils import platform
 
-KV = '''
-Screen:
-    MDBoxLayout:
-        orientation: 'vertical'
+# Set window size for desktop testing
+Window.size = (600, 720)
 
-        # Profile Section
-        MDBoxLayout:
-            orientation: 'vertical'
-            size_hint_y: 0.4
-            padding: dp(20)
-            spacing: dp(20)
-            md_bg_color: [1, 0.9, 0.8, 1]  # Background color similar to the design
+class Database:
+    """Handles database operations for the ToDo app."""
+    def __init__(self, db_name="todo.db"):
+        self.connection = sqlite3.connect(db_name)
+        self.create_table()
 
-            MDBoxLayout:
-                size_hint_y: None
-                height: dp(100)
-                spacing: dp(10)
-                pos_hint: {"center_x": 0.5}
+    def create_table(self):
+        """Creates the tasks table if it doesn't exist."""
+        with self.connection:
+            self.connection.execute('''
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task TEXT NOT NULL,
+                    due_date TEXT,
+                    completed INTEGER DEFAULT 0  -- default value for completed
+                )
+            ''')
 
-                # Profile Image
-                Image:
-                    source: 'profile_picture.png'  # Use a placeholder image or your own
-                    size_hint: None, None
-                    size: dp(100), dp(100)
-                    allow_stretch: True
-                    keep_ratio: True
-                    radius: [dp(50),]  # Circular shape
+    def create_task(self, task, due_date):
+        """Adds a new task to the database, setting completed to 0 by default."""
+        with self.connection:
+            cursor = self.connection.execute(
+                "INSERT INTO tasks (task, due_date, completed) VALUES (?, ?, ?)", 
+                (task, due_date, 0)  # Set completed to 0 by default
+            )
+            return cursor.lastrowid  # Return the ID of the newly created task
 
-            MDLabel:
-                text: "Monica Gamage"
-                halign: "center"
-                font_style: "H6"
+    def get_tasks(self):
+        """Retrieves all tasks from the database."""
+        with self.connection:
+            cursor = self.connection.execute("SELECT * FROM tasks WHERE completed = 0")
+            uncompleted_tasks = cursor.fetchall()
+            cursor = self.connection.execute("SELECT * FROM tasks WHERE completed = 1")
+            completed_tasks = cursor.fetchall()
+            return completed_tasks, uncompleted_tasks
 
-            MDLabel:
-                text: "@monicagamage"
-                halign: "center"
-                font_style: "Subtitle2"
+    def mark_task_as_complete(self, task_id):
+        """Marks a task as completed."""
+        with self.connection:
+            self.connection.execute("UPDATE tasks SET completed = 1 WHERE id = ?", (task_id,))
+            return task_id
 
-            MDRaisedButton:
-                text: "Log Out"
-                pos_hint: {"center_x": 0.5}
-                md_bg_color: [1, 0.7, 0.5, 1]  # Button color
+    def mark_task_as_incomplete(self, task_id):
+        """Marks a task as incomplete."""
+        with self.connection:
+            self.connection.execute("UPDATE tasks SET completed = 0 WHERE id = ?", (task_id,))
+            return task_id
 
-        # Clock and Greeting Section
-        MDBoxLayout:
-            orientation: 'vertical'
-            padding: dp(10)
-            spacing: dp(10)
-            size_hint_y: None
-            height: dp(200)
-            MDLabel:
-                text: "Good Afternoon"
-                halign: "center"
-                font_style: "H5"
+    def delete_task(self, task_id):
+        """Deletes a task from the database."""
+        with self.connection:
+            self.connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
-            # Placeholder for Clock Image or Widget
-            Image:
-                source: 'clock.png'  # Placeholder clock image
+class DialogContent(MDBoxLayout):
+    """Opens a dialog box that gets the task from the user."""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.ids.date_text.text = str(datetime.now().strftime('%A %d %B %Y'))
 
-        # Task List Section
-        MDBoxLayout:
-            orientation: 'vertical'
-            padding: dp(10)
-            spacing: dp(10)
-            size_hint_y: 0.4
+    def show_date_picker(self):
+        """Opens the date picker."""
+        date_dialog = MDDatePicker()
+        date_dialog.bind(on_save=self.on_save)
+        date_dialog.open()
 
-            MDLabel:
-                text: "Tasks List"
-                font_style: "H6"
-                halign: "center"
+    def on_save(self, instance, value, date_range):
+        """Gets the date from the date picker."""
+        date = value.strftime('%A %d %B %Y')
+        self.ids.date_text.text = str(date)
 
-            # Card containing tasks
-            MDCard:
-                orientation: 'vertical'
-                padding: dp(10)
-                size_hint: None, None
-                size: dp(300), dp(300)
-                elevation: 10
-                radius: [dp(20),]
+class ListItemWithCheckbox(TwoLineAvatarIconListItem):
+    """Custom list item with a checkbox."""
+    def __init__(self, pk=None, **kwargs):
+        super().__init__(**kwargs)
+        self.pk = pk
 
-                ScrollView:
-                    MDList:
-                        id: task_list
-                        OneLineIconListItem:
-                            text: "Cook Rice and Chicken at 10 am"
-                            IconLeftWidget:
-                                icon: "checkbox-blank-circle-outline"
+    def mark(self, check, the_list_item):
+        """Mark the task as complete or incomplete."""
+        if check.active:
+            the_list_item.text = '[s]' + the_list_item.text + '[/s]'
+            db.mark_task_as_complete(the_list_item.pk)
+        else:
+            the_list_item.text = str(db.mark_task_as_incomplete(the_list_item.pk))
 
-                        OneLineIconListItem:
-                            text: "Learn ReactJS at 12 pm"
-                            IconLeftWidget:
-                                icon: "checkbox-blank-circle-outline"
+    def delete_item(self, the_list_item):
+        """Delete the task."""
+        self.parent.remove_widget(the_list_item)
+        db.delete_task(the_list_item.pk)
 
-                        OneLineIconListItem:
-                            text: "Have Lunch at 1 pm"
-                            IconLeftWidget:
-                                icon: "checkbox-blank-circle-outline"
+class LeftCheckbox(ILeftBodyTouch, MDCheckbox):
+    """Custom left container for checkbox."""
 
-                        OneLineIconListItem:
-                            text: "Learn HTML and CSS at 3 pm"
-                            IconLeftWidget:
-                                icon: "checkbox-blank-circle-outline"
+class MainApp(MDApp):
+    task_list_dialog = None
 
-                        OneLineIconListItem:
-                            text: "Have Dinner at 8 pm"
-                            IconLeftWidget:
-                                icon: "checkbox-blank-circle-outline"
-
-            MDFloatingActionButton:
-                icon: "plus"
-                pos_hint: {"center_x": 0.9, "center_y": 0.5}
-'''
-
-class TaskApp(MDApp):
     def build(self):
-        return Builder.load_string(KV)
+        """Set the theme for the app."""
+        self.theme_cls.primary_palette = "DeepPurple"
 
-if _name_ == "_main_":
-    TaskApp().run()
+    def show_task_dialog(self):
+        """Show the task creation dialog."""
+        if not self.task_list_dialog:
+            self.task_list_dialog = MDDialog(
+                title="Create Task",
+                type="custom",
+                content_cls=DialogContent(),
+            )
+        self.task_list_dialog.open()
+
+    def on_start(self):
+        """Load saved tasks into the UI when the app starts."""
+        try:
+            completed_tasks, uncompleted_tasks = db.get_tasks()
+            for task in uncompleted_tasks:
+                self.add_task_to_ui(task)
+
+            for task in completed_tasks:
+                task[1] = '[s]' + task[1] + '[/s]'
+                self.add_task_to_ui(task, completed=True)
+        except Exception as e:
+            print(e)
+
+    def add_task_to_ui(self, task, completed=False):
+        """Add a task to the UI."""
+        add_task = ListItemWithCheckbox(pk=task[0], text=task[1], secondary_text=task[2])
+        if completed:
+            add_task.ids.check.active = True
+        self.root.ids.container.add_widget(add_task)
+
+    def close_dialog(self, *args):
+        """Close the task dialog."""
+        self.task_list_dialog.dismiss()
+
+    def add_task(self, task, task_date):
+        """Add a task to the list of tasks."""
+        created_task = db.create_task(task.text, task_date)
+        self.add_task_to_ui((created_task, task.text, task_date))
+        task.text = ''
+
+if __name__ == '__main__':
+    db = Database()  # Initialize the Database instance before the app
+    app = MainApp()
+    app.run()
